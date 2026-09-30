@@ -44,6 +44,9 @@ TagManager:
   - name: Shadow
     uniqueID: 2120452977
     locked: 0
+  - name: Glow
+    uniqueID: 3149384129
+    locked: 0
   m_RenderingLayers:
   - Default
   m_MigratedRenderPipelines: []

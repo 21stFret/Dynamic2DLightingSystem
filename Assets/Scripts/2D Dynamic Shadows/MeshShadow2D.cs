@@ -24,6 +24,11 @@ public class MeshShadow2D : MonoBehaviour
     [Tooltip("Nudge the shadow base Y in world units")]
     public float shadowOffsetY = 0f;
 
+    public enum AnchorEdge { Bottom, Left, Right }
+
+    [Tooltip("Sprite edge the shadow stays attached to. Bottom suits upright objects; Left/Right suit long objects laid out vertically (e.g. a bench running up the screen). The shadow still thins to a line when the light runs parallel to this edge.")]
+    public AnchorEdge anchorEdge = AnchorEdge.Bottom;
+
     [Header("Day/Night Blending")]
     [Tooltip("Sun elevation below which fire shadows are at full intensity")]
     [Range(0f, 1f)]
@@ -98,6 +103,8 @@ public class MeshShadow2D : MonoBehaviour
 #if UNITY_EDITOR
     void OnValidate()
     {
+        lastSprite = null; // anchorEdge may have changed; forces UVs to rebuild next frame
+
         if (spriteRenderer == null)
             spriteRenderer = GetComponent<SpriteRenderer>();
 
@@ -167,6 +174,11 @@ public class MeshShadow2D : MonoBehaviour
         if (ShadowMaster.Instance == null)
             return;
 
+        // A script recompile drops the private shadowObject reference but leaves the DontSave
+        // child in the hierarchy, still drawing its last geometry. Clear it before rebuilding.
+        Transform stale = transform.Find(name + "_MeshShadow");
+        if (stale != null) DestroyImmediate(stale.gameObject);
+
         shadowObject = new GameObject(name + "_MeshShadow");
         shadowObject.hideFlags = HideFlags.DontSave;
 
@@ -216,6 +228,15 @@ public class MeshShadow2D : MonoBehaviour
         if (index < autoShadowObjects.Count) autoShadowObjects.RemoveAt(index);
         if (index < autoMeshes.Count)        autoMeshes.RemoveAt(index);
         if (index < autoMaterials.Count)     autoMaterials.RemoveAt(index);
+
+        // Everything after the removed slot shifted down one; re-sync names and sorting to match.
+        for (int i = index; i < autoShadowObjects.Count; i++)
+        {
+            var go = autoShadowObjects[i];
+            if (go == null) continue;
+            go.name = name + "_MeshAutoShadow_" + i;
+            go.GetComponent<MeshRenderer>().sortingOrder = spriteRenderer.sortingOrder - 2 - i;
+        }
     }
 
     void CreateAutoShadowMesh(int index)
@@ -261,13 +282,21 @@ public class MeshShadow2D : MonoBehaviour
         float u1 = (tr.x + tr.width)  / tw;
         float v1 = (tr.y + tr.height) / th;
 
-        var uvs = new Vector2[]
+        // Verts are [edgeA, edgeB, edgeB + ext, edgeA + ext]: the anchored edge's texels sit at the
+        // base and the opposite side of the sprite lands at the far end of the shadow.
+        Vector2[] uvs;
+        switch (anchorEdge)
         {
-            new Vector2(u0, v0),
-            new Vector2(u1, v0),
-            new Vector2(u1, v1),
-            new Vector2(u0, v1),
-        };
+            case AnchorEdge.Left:
+                uvs = new[] { new Vector2(u0, v0), new Vector2(u0, v1), new Vector2(u1, v1), new Vector2(u1, v0) };
+                break;
+            case AnchorEdge.Right:
+                uvs = new[] { new Vector2(u1, v0), new Vector2(u1, v1), new Vector2(u0, v1), new Vector2(u0, v0) };
+                break;
+            default:
+                uvs = new[] { new Vector2(u0, v0), new Vector2(u1, v0), new Vector2(u1, v1), new Vector2(u0, v1) };
+                break;
+        }
 
         shadowMesh.uv = uvs;
 
@@ -306,13 +335,12 @@ public class MeshShadow2D : MonoBehaviour
 
     void LateUpdate()
     {
-        // [ExecuteInEditMode] means this otherwise ticks every frame in the Scene view even
-        // outside Play mode; nothing here needs to animate while the editor is idle.
-        if (!Application.isPlaying)
-            return;
-
         var master = ShadowMaster.Instance;
         if (master == null)
+            return;
+
+        // Follows ShadowMaster's own editor gate so scrubbing the sun previews mesh shadows too.
+        if (!Application.isPlaying && !master.updateInEditor)
             return;
 
         if (shadowObject == null)
@@ -337,29 +365,46 @@ public class MeshShadow2D : MonoBehaviour
         if (s != lastSprite)
             UpdateSpriteData(s);
 
-        // Tight visual corners in world space
-        Vector3 bl_world = transform.TransformPoint(new Vector3(localMinX, localMinY, 0f));
-        Vector3 br_world = transform.TransformPoint(new Vector3(localMaxX, localMinY, 0f));
+        // Anchored edge (tight visual corners, world space) and the sprite's depth across it,
+        // which is what shadow length scales from.
+        Vector3 edgeA, edgeB;
+        float depth;
+        switch (anchorEdge)
+        {
+            case AnchorEdge.Left:
+                edgeA = transform.TransformPoint(new Vector3(localMinX, localMinY, 0f));
+                edgeB = transform.TransformPoint(new Vector3(localMinX, localMaxY, 0f));
+                depth = Mathf.Abs(transform.lossyScale.x) * (localMaxX - localMinX);
+                break;
+            case AnchorEdge.Right:
+                edgeA = transform.TransformPoint(new Vector3(localMaxX, localMinY, 0f));
+                edgeB = transform.TransformPoint(new Vector3(localMaxX, localMaxY, 0f));
+                depth = Mathf.Abs(transform.lossyScale.x) * (localMaxX - localMinX);
+                break;
+            default:
+                edgeA = transform.TransformPoint(new Vector3(localMinX, localMinY, 0f));
+                edgeB = transform.TransformPoint(new Vector3(localMaxX, localMinY, 0f));
+                depth = Mathf.Abs(transform.lossyScale.y) * (localMaxY - localMinY);
+                break;
+        }
 
         Vector3 offset = new Vector3(shadowOffsetX, shadowOffsetY, 0f);
-        bl_world += offset;
-        br_world += offset;
-
-        float worldHeight = Mathf.Abs(transform.lossyScale.y) * (localMaxY - localMinY);
+        edgeA += offset;
+        edgeB += offset;
 
         // --- Sun shadow ---
         float sunElevation = master.GetSunElevation();
         Vector2 shadowDir  = master.GetShadowDirection();
 
-        float fullLength   = master.shadowDistanceMultiplier * Mathf.Max(0f, objectHeight) * worldHeight;
+        float fullLength   = master.shadowDistanceMultiplier * Mathf.Max(0f, objectHeight) * depth;
         float sunExtension = fullLength * Mathf.Lerp(1f, minShadowLength, sunElevation);
 
         Vector3 sunVec = new Vector3(shadowDir.x, shadowDir.y, 0f) * sunExtension;
 
-        cachedVerts[0] = bl_world;
-        cachedVerts[1] = br_world;
-        cachedVerts[2] = br_world + sunVec;
-        cachedVerts[3] = bl_world + sunVec;
+        cachedVerts[0] = edgeA;
+        cachedVerts[1] = edgeB;
+        cachedVerts[2] = edgeB + sunVec;
+        cachedVerts[3] = edgeA + sunVec;
 
 
         shadowMesh.vertices = cachedVerts;
@@ -383,11 +428,11 @@ public class MeshShadow2D : MonoBehaviour
 
         // --- Fire/torch light shadows ---
         if (Application.isPlaying)
-            UpdateAutoLightShadows(sunElevation, bl_world, br_world, worldHeight, master);
+            UpdateAutoLightShadows(sunElevation, edgeA, edgeB, depth, master);
     }
 
-    void UpdateAutoLightShadows(float sunElevation, Vector3 bl_world, Vector3 br_world,
-                                float worldHeight, ShadowMaster master)
+    void UpdateAutoLightShadows(float sunElevation, Vector3 edgeA, Vector3 edgeB,
+                                float depth, ShadowMaster master)
     {
         // 0 = full day, 1 = full night
         float nightBlend;
@@ -413,15 +458,17 @@ public class MeshShadow2D : MonoBehaviour
             Vector2 shadowDir  = -toLight.normalized;
 
             float lightElevation = light.GetLightHeight();
-            float extension = master.shadowDistanceMultiplier * Mathf.Max(0f, objectHeight) * worldHeight
+            float extension = master.shadowDistanceMultiplier * Mathf.Max(0f, objectHeight) * depth
                             * Mathf.Lerp(1f, minShadowLength, lightElevation);
 
             Vector3 sv = new Vector3(shadowDir.x, shadowDir.y, 0f) * extension;
 
-            autoMeshes[i].vertices = new Vector3[]
-            {
-                bl_world, br_world, br_world + sv, bl_world + sv
-            };
+            // Mesh.vertices/colors copy the array, so the sun path's scratch arrays are safe to reuse.
+            cachedVerts[0] = edgeA;
+            cachedVerts[1] = edgeB;
+            cachedVerts[2] = edgeB + sv;
+            cachedVerts[3] = edgeA + sv;
+            autoMeshes[i].vertices = cachedVerts;
             autoMeshes[i].RecalculateBounds();
 
             // Intensity: light strength × distance falloff × day/night blend
@@ -435,7 +482,8 @@ public class MeshShadow2D : MonoBehaviour
 
             Color c = master.shadowColor;
             c.a = Mathf.Clamp01(intensity);
-            autoMeshes[i].colors = new Color[] { c, c, c, c };
+            cachedColors[0] = cachedColors[1] = cachedColors[2] = cachedColors[3] = c;
+            autoMeshes[i].colors = cachedColors;
         }
     }
 
