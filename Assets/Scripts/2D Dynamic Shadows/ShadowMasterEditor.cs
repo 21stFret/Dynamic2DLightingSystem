@@ -44,7 +44,6 @@ public class ShadowMasterEditor : Editor
         // Help box
         EditorGUILayout.HelpBox(
             "Use 'Refresh All Shadows' to detect new shadow components.\n" +
-            "Use 'Clean Up Duplicate Shadows' if you see multiple shadow objects.\n" +
             "Use 'Force Update All Shadows' to manually update shadow rendering.",
             MessageType.Info
         );

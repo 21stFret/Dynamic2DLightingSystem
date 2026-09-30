@@ -28,7 +28,7 @@ public class Sun2DManager : MonoBehaviour
 
     [Header("Sun Arc")]
     public float sunArcRadius = 20f;
-    [Range(0.01f, 10f)] public float sunHeightTarget = 0.25f;
+    [Range(0.01f, 10f)] public float sunHeightTarget = 5f;
 
     [Header("Sun Light")]
     public float sunIntensity = 1f;
