@@ -363,7 +363,7 @@ MonoBehaviour:
   sunIntensity: 0
   sunColor: {r: 0.9575472, g: 0.87900096, b: 0.73622733, a: 1}
   dawnDuskColor: {r: 1, g: 0.5019608, b: 0.8671472, a: 1}
-  ambientDayIntensity: 1
+  ambientDayIntensity: 0.8
   ambientNightIntensity: 0.2
   ambientDayColor: {r: 1, g: 0.8766557, b: 0.7169812, a: 1}
   ambientNightColor: {r: 0.6132076, g: 0.9944602, b: 1, a: 1}
@@ -816,7 +816,6 @@ MonoBehaviour:
   minShadowLength: 0.3
   shadowOffsetX: 0
   shadowOffsetY: 0
-  anchorEdge: 0
   nightThreshold: 0.4
   dayThreshold: 0.6
 --- !u!50 &453469868
@@ -1235,8 +1234,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ShadowCastingLight
   lightHeight: 0.714
-  shadowIntensity: 0.896
-  daytimeIntensity: 0.086
+  shadowIntensity: 0.632
+  daytimeIntensity: 0
   shadowCasterLayerMask:
     serializedVersion: 2
     m_Bits: 1
@@ -1328,7 +1327,6 @@ MonoBehaviour:
   minShadowLength: 0.3
   shadowOffsetX: 0
   shadowOffsetY: 0
-  anchorEdge: 0
   nightThreshold: 0.4
   dayThreshold: 0.6
 --- !u!50 &636423680
